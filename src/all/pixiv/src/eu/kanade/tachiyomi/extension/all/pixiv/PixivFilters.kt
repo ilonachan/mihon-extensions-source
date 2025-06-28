@@ -47,7 +47,10 @@ internal class PixivFilters : MutableList<Filter<*>> by mutableListOf() {
 
     fun makeUsersPredicate(): ((PixivIllust) -> Boolean)? {
         val users = users.ifBlank { return null }
-        val regex = Regex(users.split(' ').joinToString("|") { Regex.escape(it) })
+        val regex = Regex(
+            users.split(',')
+                .joinToString("|", transform = { Regex.escape(it.trim()) }),
+        )
 
         return { it.author_details?.user_name?.contains(regex) == true }
     }

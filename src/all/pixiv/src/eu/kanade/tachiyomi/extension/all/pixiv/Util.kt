@@ -19,10 +19,6 @@ internal fun parseSMangaUrl(url: String): Pair<String, Boolean> {
     return Pair(url.substringAfterLast('/'), isSeries)
 }
 
-internal fun <K, V> lruCached(capacity: Int, compute: (K) -> V): (K) -> V {
-    val cache = object : LruCache<K, V>(capacity) {
-        override fun create(key: K): V = compute(key)
-    }
-
-    return { key -> synchronized(cache) { cache.get(key) } }
+internal fun <K, V> lruCache(capacity: Int, compute: (K) -> V) = object : LruCache<K, V>(capacity) {
+    override fun create(key: K): V = compute(key)
 }
