@@ -97,3 +97,24 @@ internal data class PixivRankingEntry(
     val illustId: String? = null,
     val rank: Int? = null,
 )
+
+@Serializable
+internal data class PixivUserSearchResponse(
+    val page: Page,
+    val users: List<User>,
+) {
+    @Serializable
+    internal data class Page(
+        val userIds: List<Int>,
+//        val workIds: Map<String, List<JsonElement>>,
+        val total: Int,
+    )
+
+    @Serializable
+    internal data class User(
+        val name: String,
+        val userId: String,
+        val comment: String?,
+        val image: String?,
+    )
+}

@@ -6,7 +6,6 @@ import eu.kanade.tachiyomi.source.model.Page
 import eu.kanade.tachiyomi.source.model.SChapter
 import eu.kanade.tachiyomi.source.model.SManga
 import eu.kanade.tachiyomi.source.online.HttpSource
-import eu.kanade.tachiyomi.util.asJsoup
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.json.Json
@@ -78,7 +77,6 @@ class Pixiv(override val lang: String) : HttpSource() {
     /**
      * Detail information for artworks, either "illustrations" or "manga" chapters
      */
-    @OptIn(ExperimentalStdlibApi::class)
     private val IllustDetails = object {
         /**
          * The maximum amount of IDs that the server will accept in a [fetchMany] request.
@@ -327,13 +325,12 @@ class Pixiv(override val lang: String) : HttpSource() {
     private val Search = object {
         val basicCallCache = lruCache<BasicSearchParams, ApiCall>(5) { it.toApiCall() }
 
-        fun fetchBasicPage(params: BasicSearchParams, page: Int = 1): List<PixivIllust> {
-            val call = basicCallCache.get(params)
-            call.url.setEncodedQueryParameter("p", page.toString())
-            val illusts = call.executeApi<PixivResults>().getOrThrow().illusts!!
-
-            return illusts.filterNot { it.is_ad_container == 1 || it.type == "2" }
-        }
+        fun fetchBasicPage(params: BasicSearchParams, page: Int = 1) =
+            basicCallCache.get(params)
+                .apply {
+                    url.setEncodedQueryParameter("p", page.toString())
+                }.executeApi<PixivResults>().getOrThrow().illusts!!
+                .filterNot { it.is_ad_container == 1 || it.type == "2" }
 
         fun streamBasic(params: BasicSearchParams) = sequence {
             for (p in countUp(start = 1)) {
@@ -341,7 +338,7 @@ class Pixiv(override val lang: String) : HttpSource() {
             }
         }
 
-        fun fetchUserPage(userId: String, type: String?, page: Int = 1): List<PixivIllust> =
+        fun fetchForUserPage(userId: String, type: String?, page: Int = 1) =
             ApiCall("/touch/ajax/user/illusts")
                 .apply {
                     type?.let { url.setEncodedQueryParameter("type", it) }
@@ -349,9 +346,29 @@ class Pixiv(override val lang: String) : HttpSource() {
                     url.setEncodedQueryParameter("p", page.toString())
                 }.executeApi<PixivResults>().getOrThrow().illusts!!
 
-        fun streamUser(userId: String, type: String?) = sequence {
+        fun streamForUser(userId: String, type: String?) = sequence {
             for (p in countUp(start = 1)) {
-                yieldAll(fetchUserPage(userId, type, p).apply { if (isEmpty()) return@sequence })
+                yieldAll(fetchForUserPage(userId, type, p).apply { if (isEmpty()) return@sequence })
+            }
+        }
+
+        fun fetchUserIdsByName(nick: String, page: Int) =
+            ApiCall("/ajax/search/users")
+                .apply {
+//                url.setQueryParameter("i", "0") // also lists users that aren't "creators"
+                    url.setQueryParameter("nick", nick)
+                    url.setEncodedQueryParameter("p", page.toString())
+                }.executeApi<PixivUserSearchResponse>().getOrThrow().page.userIds
+
+        fun streamUserIdsByName(nick: String) = sequence {
+            for (p in countUp(start = 1)) {
+                yieldAll(fetchUserIdsByName(nick, p).apply { if (isEmpty()) return@sequence })
+            }
+        }
+
+        fun streamForUserByName(userNick: String, type: String?) = sequence {
+            for (uid in streamUserIdsByName(userNick)) {
+                yieldAll(streamForUser(uid.toString(), type))
             }
         }
     }
@@ -401,7 +418,7 @@ class Pixiv(override val lang: String) : HttpSource() {
 
             // TODO: it would be useful to allow multiple user: tags in the query
             if (target is PixivTarget.User) {
-                searchSequence = Search.streamUser(
+                searchSequence = Search.streamForUser(
                     userId = target.userId,
                     type = filters.type,
                 )
@@ -428,8 +445,8 @@ class Pixiv(override val lang: String) : HttpSource() {
                     filters.makeUsersPredicate()?.let(::add)
                 }
             } else if (filters.users.isNotBlank()) {
-                searchSequence = makeUserIllustSearchSequence(
-                    nick = filters.users,
+                searchSequence = Search.streamForUserByName(
+                    userNick = filters.users,
                     type = filters.type,
                 )
 
@@ -465,25 +482,6 @@ class Pixiv(override val lang: String) : HttpSource() {
 
         val mangas = searchIterator.truncateToList(50).toList()
         return Observable.just(MangasPage(mangas, hasNextPage = mangas.isNotEmpty()))
-    }
-
-    private fun makeUserIllustSearchSequence(nick: String, type: String?) = sequence<PixivIllust> {
-        val searchUsers = HttpCall("/search_user.php?s_mode=s_usr")
-            .apply { url.addQueryParameter("nick", nick) }
-
-        for (p in countUp(start = 1)) {
-            searchUsers.url.setEncodedQueryParameter("p", p.toString())
-
-            val userIds = searchUsers.execute().asJsoup()
-                .select(".user-recommendation-item > a").eachAttr("href")
-                .map { it.substringAfterLast('/') }
-
-            if (userIds.isEmpty()) break
-
-            for (userId in userIds) {
-                yieldAll(Search.streamUser(userId, type))
-            }
-        }
     }
 
     override fun getFilterList() = FilterList(PixivFilters())
